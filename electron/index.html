@@ -1,0 +1,429 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Camellya</title>
+  <style>
+    html, body { margin:0; height:100%; background:#222; color:#eaeaea; }
+    #log {
+      position: static !important;   /* was fixed */
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin: 0;
+      padding: 0;
+    }
+    canvas { display:block; }
+    #devbox {
+      position: fixed; left: 8px; top: 8px; z-index: 15;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(4px);
+      border: 1px solid #555; border-radius: 10px; color: #eaeaea;
+      font: 12px/1.4 system-ui; min-width: 220px; max-width: 46vw;
+      box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    }
+    #devbox header {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 6px 8px; border-bottom: 1px solid #444; cursor: move;
+    }
+    #devbox header .title { font-weight: 600; opacity: .9; }
+    #devbox header button {
+      padding: 2px 8px; border-radius: 8px; border: 1px solid #555;
+      background: #2a2a2a; color: #eaeaea; cursor: pointer;
+    }
+    #devbox-body { padding: 8px; }
+    #log { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+<!-- 1) Live2D Cubism Core (must be first) -->
+<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+
+<!-- 2) PIXI -->
+<script src="https://unpkg.com/pixi.js@7/dist/pixi.min.js"></script>
+
+<!-- 3) pixi-live2d-display (Cubism 4 build) -->
+<script src="https://unpkg.com/pixi-live2d-display/dist/cubism4.min.js"></script>
+
+<script>
+  // sanity check
+  if (!PIXI?.live2d?.Live2DModel) {
+    console.error('pixi-live2d-display (cubism4) not loaded');
+  } else {
+    console.log('Live2D plugin OK');
+  }
+</script>
+
+
+</head>
+<body>
+  <div id="devbox">
+    <header id="devbox-header">
+      <span class="title">Debug</span>
+      <button id="devbox-collapse" title="Collapse">–</button>
+    </header>
+    <div id="devbox-body">
+      <div id="log">loading…</div>
+    </div>
+  </div>
+  <canvas id="stage"></canvas>
+  <div id="talk-ui" style="
+    position:fixed; left:8px; bottom:8px; z-index:20;
+    background:rgba(0,0,0,.55); backdrop-filter:blur(4px);
+    padding:8px; border-radius:10px; font:12px system-ui; color:#eaeaea;
+    box-shadow:0 6px 20px rgba(0,0,0,.35); display:flex; gap:6px; align-items:center;">
+    <button id="listenBtn" style="padding:6px 10px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">
+      🎙️ Speak (Python mic)
+    </button>
+    <input id="userText" placeholder="Type message…" 
+          style="width:220px; padding:6px; border-radius:8px; border:1px solid #555; background:#1f1f1f; color:#eaeaea">
+    <button id="sendBtn" style="padding:6px 10px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">
+      ➤ Send
+    </button>
+  </div>
+  <script>
+    const log = (...a) => { console.log(...a); document.getElementById('log').textContent = a.join(' '); };
+
+    const app = new PIXI.Application({
+      view: document.getElementById('stage'),
+      backgroundAlpha: 0,
+      resizeTo: window,
+      antialias: true,
+      autoDensity: true,
+      resolution: Math.max(1, window.devicePixelRatio || 1)
+    });
+
+    const { Live2DModel } = PIXI.live2d;
+
+    (async () => {
+      try {
+        log('loading model…');
+        const model = await Live2DModel.from('assets/camellya/camellya.model3.json');
+        app.stage.addChild(model);
+
+        // Expression UI
+        (() => {
+          // Create panel
+          const panel = document.createElement('div');
+          panel.id = 'expr-panel';
+          panel.style.cssText = `
+            position:fixed; right:8px; top:8px; z-index:10;
+            background:rgba(0,0,0,.55); backdrop-filter: blur(4px);
+            padding:8px; border-radius:10px; font:12px system-ui; color:#eaeaea;
+            box-shadow:0 6px 20px rgba(0,0,0,.35); min-width: 200px;
+          `;
+          panel.innerHTML = `
+            <b style="opacity:.85; display:block; margin-bottom:6px">Expressions & View</b>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+              <button id="expr-prev" style="padding:4px 8px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">‹</button>
+              <select id="expr-select" style="flex:1; min-width:120px; padding:4px 6px; border-radius:8px; border:1px solid #555; background:#1f1f1f; color:#eaeaea"></select>
+              <button id="expr-next" style="padding:4px 8px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">›</button>
+              <button id="expr-rand" style="padding:4px 8px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">🎲</button>
+              <button id="expr-reset" style="padding:4px 8px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">Reset</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 48px 1fr max-content; gap:8px; align-items:center">
+              <span style="opacity:.85">Zoom</span>
+              <input id="zoom-slider" type="range" min="0.25" max="4.0" step="0.01" value="1.00"
+                    style="width:100%; accent-color:#9ad;"/>
+              <input id="zoom-readout" type="text" value="100%" readonly
+                    style="width:42px; text-align:right; padding:4px 6px; border-radius:8px; border:1px solid #555; background:#1f1f1f; color:#eaeaea"/>
+            </div>
+            <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:8px">
+              <button id="zoom-reset" style="padding:4px 8px; border-radius:8px; border:1px solid #555; background:#2a2a2a; color:#eaeaea; cursor:pointer">Reset Zoom</button>
+            </div>
+          `;
+          document.body.appendChild(panel);
+
+          // Helpers
+          const disableAll = () => {
+            for (const id of ['expr-prev','expr-next','expr-rand','expr-reset','expr-select']) {
+              const el = panel.querySelector('#' + id);
+              if (el) { el.disabled = true; el.style.opacity = '0.5'; el.style.cursor = 'not-allowed'; }
+            }
+            panel.querySelector('b').textContent = 'Expressions (none found)';
+          };
+
+            // Grab expression manager & names (with guards)
+          const exprMgr = model?.internalModel?.motionManager?.expressionManager || null;
+          let names = [];
+          if (exprMgr?.definitions?.length) {
+            names = exprMgr.definitions.map(d => d?.name).filter(Boolean);
+          }
+          // Fallback: try reading from model settings if needed
+          if (!names.length) {
+            const defs = (model?.internalModel?.settings?.expressions ||
+                          model?.internalModel?.settings?.Expressions || []);
+            names = defs.map(d => d?.name || d?.Name).filter(Boolean);
+          }
+
+          const select = panel.querySelector('#expr-select');
+          const prev   = panel.querySelector('#expr-prev');
+          const next   = panel.querySelector('#expr-next');
+          const rand   = panel.querySelector('#expr-rand');
+          const reset  = panel.querySelector('#expr-reset');
+
+          const zoomSlider  = panel.querySelector('#zoom-slider');
+          const zoomReadout = panel.querySelector('#zoom-readout');
+          const zoomReset   = panel.querySelector('#zoom-reset');
+
+          zoomSlider.oninput = () => setZoom(parseFloat(zoomSlider.value));
+          zoomReset.onclick  = () => setZoom(1.0);
+          if (!exprMgr || !names.length) {
+            disableAll();
+            return;
+          }
+
+          // Populate dropdown
+          for (const n of names) {
+            const o = document.createElement('option'); o.value = o.textContent = n; select.appendChild(o);
+          }
+
+          // Wiring
+          let idx = 0;
+          function apply(i) {
+            idx = (i + names.length) % names.length;
+            const name = names[idx];
+            model.expression(name);
+            select.value = name;
+            if (typeof log === 'function') log('expression:', name);
+          }
+
+          prev.onclick = () => apply(idx - 1);
+          next.onclick = () => apply(idx + 1);
+          rand.onclick = () => apply(Math.floor(Math.random() * names.length));
+          reset.onclick = () => {
+            if (exprMgr?.resetExpression) exprMgr.resetExpression();
+            if (typeof log === 'function') log('expression: reset');
+          };
+          select.onchange = () => {
+            const i = names.indexOf(select.value);
+            if (i >= 0) apply(i);
+          };
+
+          // Start on first (optional)
+          apply(0);
+        })();
+
+        let pan = new PIXI.Point(0, 0);
+
+        let zoom = 1.0;                // overall user zoom multiplier
+        const MIN_ZOOM = 0.25;
+        const MAX_ZOOM = 4.0;
+
+        function setZoom(z) {
+          zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(z)));
+
+          // Update UI if it exists yet (safe to call before the panel is built)
+          const slider  = document.getElementById('zoom-slider');
+          const readout = document.getElementById('zoom-readout');
+          if (slider)  slider.value  = zoom.toFixed(2);
+          if (readout) readout.value = Math.round(zoom * 100) + '%';
+          place();
+        }
+
+        function clampPanIfLost() {
+          place(); // apply transforms so getBounds is current
+          const b = model.getBounds();
+          const vw = app.renderer.width, vh = app.renderer.height;
+
+          // If the model’s entire AABB is offscreen, recenter pan
+          const offscreen =
+            (b.right < 0) || (b.left > vw) || (b.bottom < 0) || (b.top > vh);
+
+          if (offscreen) {
+            pan.set(0, 0);
+            place();
+          }
+        }
+
+        // Bottom-center anchor
+        model.anchor.set(0.5, 1.0);
+
+        // helper: compute a scale that fits height (and width as fallback)
+        function computeScale() {
+          // reset to 1 to get true local bounds
+          model.scale.set(1);
+          model.update(0);
+
+          const lb = model.getLocalBounds();   // untransformed bounds
+          const vw = app.renderer.width;
+          const vh = app.renderer.height;
+
+          const padY = Math.round(vh * 0.03); // 3% bottom padding
+          const padX = Math.round(vw * 0.03); // 3% side padding
+
+          const scaleH = (vh - padY * 2) / lb.height;
+          const scaleW = (vw - padX * 2) / lb.width;
+
+          // choose the smaller so it fits both height and width
+          return Math.max(0.1, Math.min(scaleH, scaleW));
+        }
+
+        function place() {
+          const s = computeScale();
+          model.scale.set(s * zoom);
+
+          const vw = app.renderer.width;
+          const vh = app.renderer.height;
+          model.position.set(vw / 2 + pan.x, vh - Math.round(vh * 0.02) + pan.y);
+          model.update(0);
+        }
+
+        place();
+        setZoom(1.0);
+        window.addEventListener('resize', place);
+
+        // Panning
+        app.stage.interactive = true;
+        app.stage.hitArea = app.screen;
+
+        let dragging = false;
+        let last = null;
+
+        function onDown(e) {
+          dragging = true;
+          last = e.data.global.clone();
+          document.body.style.cursor = 'grabbing';
+        }
+
+        function onMove(e) {
+          if (!dragging) return;
+          const g = e.data.global;
+          pan.x += g.x - last.x;
+          pan.y += g.y - last.y;
+          last.copyFrom(g);
+          place();
+        }
+
+        function onUp() {
+          dragging = false;
+          last = null;
+          document.body.style.cursor = '';
+        }
+        app.stage
+          .on('pointerdown', onDown)
+          .on('pointermove', onMove)
+          .on('pointerup', onUp)
+          .on('pointerupoutside', onUp);
+        
+        const canvasEl = document.getElementById('stage');
+
+        // Cursor Zoom
+        function zoomAtCursor(factor, clientX, clientY) {
+          const rect = canvasEl.getBoundingClientRect();
+          const cx = clientX - rect.left;
+          const cy = clientY - rect.top;
+
+          const sFit    = computeScale();
+          const beforeS = sFit * zoom;
+          const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+          const afterS  = sFit * newZoom;
+          const ratio   = afterS / beforeS;
+
+          // model's anchor is bottom-center; this is its base screen position
+          const baseX = app.renderer.width  / 2 + pan.x;
+          const baseY = app.renderer.height - Math.round(app.renderer.height * 0.02) + pan.y;
+
+          // Nudge pan so the point under the cursor stays put
+          const dx = cx - baseX;
+          const dy = cy - baseY;
+          pan.x += dx - dx * ratio;
+          pan.y += dy - dy * ratio;
+
+          setZoom(newZoom);
+          clampPanIfLost();   // ensure it can’t disappear
+        }
+
+        canvasEl.addEventListener('wheel', (e) => {
+          e.preventDefault();
+
+          // Smooth exponential zoom (scroll up to zoom in, down to zoom out)
+          const factor = Math.exp(-e.deltaY * 0.0004);  // tweak 0.001–0.002 for feel
+          zoomAtCursor(factor, e.clientX, e.clientY);
+        }, { passive: false });
+
+        log('model loaded ✔');
+      } catch (e) {
+        console.error(e);
+        log('error: ' + (e && e.message ? e.message : e));
+      }
+    })();
+
+    const listenBtn = document.getElementById('listenBtn');
+    const sendBtn   = document.getElementById('sendBtn');
+    const userTextEl= document.getElementById('userText');
+
+    async function postJSON(url, body) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body || {})
+      });
+      if (!r.ok) throw new Error(url + ' -> HTTP ' + r.status);
+      return r.json();
+    }
+
+    listenBtn?.addEventListener('click', async () => {
+      listenBtn.disabled = true;
+      try {
+        log('listening via Python mic…');
+        const { heard, reply, error } = await postJSON('http://127.0.0.1:8765/listen_once');
+        if (error) throw new Error(error);
+        log('you:', heard);
+        log('reply:', reply);
+        // Piper plays audio on Python side
+      } catch (e) {
+        console.error(e); log('error:', e.message || e);
+      } finally {
+        listenBtn.disabled = false;
+      }
+    });
+
+    sendBtn?.addEventListener('click', async () => {
+      const text = (userTextEl.value || '').trim();
+      if (!text) return;
+      sendBtn.disabled = true;
+      try {
+        log('you:', text);
+        const { reply, error } = await postJSON('http://127.0.0.1:8765/reply', { text });
+        if (error) throw new Error(error);
+        log('reply:', reply);
+        // Piper plays audio on Python side
+      } catch (e) {
+        console.error(e); log('error:', e.message || e);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+
+    (() => {
+  const box = document.getElementById('devbox');
+  const head = document.getElementById('devbox-header');
+  const body = document.getElementById('devbox-body');
+  const btn  = document.getElementById('devbox-collapse');
+
+  btn.addEventListener('click', () => {
+    const hide = body.style.display !== 'none' ? 'none' : 'block';
+    body.style.display = hide;
+    btn.textContent = hide === 'none' ? '+' : '–';
+  });
+
+    let dragging = false, sx = 0, sy = 0, sl = 0, st = 0;
+    head.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      sx = e.clientX; sy = e.clientY;
+      const r = box.getBoundingClientRect();
+      sl = r.left; st = r.top;
+      head.setPointerCapture(e.pointerId);
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      box.style.left = Math.round(sl + dx) + 'px';
+      box.style.top  = Math.round(st + dy) + 'px';
+      box.style.right = 'auto'; box.style.bottom = 'auto';
+    });
+    head.addEventListener('pointerup', () => { dragging = false; });
+  })();
+  </script>
+</body>
+</html>

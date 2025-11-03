@@ -1,0 +1,32 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "camellya.moc3",
+		"Textures": [
+			"camellya.4096/texture_00.png",
+			"camellya.4096/texture_01.png",
+			"camellya.4096/texture_02.png"
+		],
+		"Physics": "camellya.physics3.json",
+		"DisplayInfo": "camellya.cdi3.json",
+		"Expressions": [
+			{"Name": "Default", "File": "exp3/default.exp3.json"},
+			{"Name": "Sad", "File": "exp3/sad.exp3.json"},
+			{"Name": "Blush", "File": "exp3/blush.exp3.json"},
+			{"Name": "Darken", "File": "exp3/darken.exp3.json"},
+			{"Name": "Heart Eyes", "File": "exp3/hearteyes.exp3.json"}
+		]
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": []
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		}
+	]
+}
